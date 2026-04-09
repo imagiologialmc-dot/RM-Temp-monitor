@@ -250,6 +250,19 @@ tbody tr:hover{background:var(--color-surface-2)}
       if (typeof renderAll === 'function') renderAll();
     }
   });
+
+  // Email flag listener — controla envio único diário
+  const emailFlagRef = doc(db, 'configuracoes', 'emailFlag');
+  window._fbSetEmailFlag = async function(todayKey) {
+    await setDoc(emailFlagRef, { lastSentDate: todayKey, sentAt: new Date().toISOString() });
+  };
+  onSnapshot(emailFlagRef, (snap) => {
+    window._firestoreLastSentDate = snap.exists() ? snap.data().lastSentDate : null;
+    // Após carregar o flag, verifica se deve enviar
+    if (typeof window._checkAndSendDaily === 'function') {
+      setTimeout(window._checkAndSendDaily, 500);
+    }
+  });
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
@@ -621,43 +634,25 @@ setInterval(updateClock,1000); updateClock();
 loadState(); renderAll();
 
 // ── Trigger: envio único diário via Firestore flag ───────────────────────
-// O flag lastAutoSend é guardado no Firestore para ser partilhado entre
-// todos os dispositivos — garante envio único mesmo com múltiplos telemóveis
-(function checkOnOpenTrigger() {
+window._emailFlagChecked = false;
+
+window._checkAndSendDaily = async function() {
+  if (window._emailFlagChecked) return;
+  window._emailFlagChecked = true;
   const now = new Date();
-  const todayKey = now.toISOString().split('T')[0]; // ex: "2026-04-09"
-  const hour = now.getHours();
-  if (hour < 6) return; // antes das 06:00 não faz nada
-
-  // Aguarda Firebase estar disponível
-  setTimeout(async () => {
-    try {
-      // Verifica o flag no Firestore
-      const { getFirestore, doc, getDoc, setDoc } = await import(
-        "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js"
-      );
-      const { getApp } = await import(
-        "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js"
-      );
-      const db = getFirestore(getApp());
-      const flagRef = doc(db, 'configuracoes', 'emailFlag');
-      const flagSnap = await getDoc(flagRef);
-
-      const lastSent = flagSnap.exists() ? flagSnap.data().lastSentDate : null;
-
-      if (lastSent === todayKey) return; // já foi enviado hoje por outro dispositivo
-
-      // Marca como enviado ANTES de enviar (evita race condition)
-      await setDoc(flagRef, { lastSentDate: todayKey, sentAt: new Date().toISOString() });
-
-      // Envia o email
-      await sendEmailJS(false);
-      toast('📧 Relatório diário enviado automaticamente.');
-    } catch(e) {
-      console.error('Erro no trigger automático:', e);
-    }
-  }, 4500); // delay para Firebase carregar registos
-})();
+  if (now.getHours() < 6) return;
+  const todayKey = now.toISOString().split('T')[0];
+  try {
+    const lastSent = window._firestoreLastSentDate || null;
+    if (lastSent === todayKey) return;
+    if (window._fbSetEmailFlag) await window._fbSetEmailFlag(todayKey);
+    await sendEmailJS(false);
+    toast('📧 Relatório diário enviado automaticamente.');
+  } catch(e) {
+    console.error('Erro no trigger automático:', e);
+    window._emailFlagChecked = false;
+  }
+};
 // ─────────────────────────────────────────────────────────────────────────
 
 
@@ -728,9 +723,9 @@ function renderEmails(){
   if(!state.emails.length){ box.innerHTML = '<div class="empty">Sem e-mails configurados.</div>'; return; }
   box.innerHTML = state.emails.map((email,i)=>`
     <div class="email-item">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--color-primary)"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-      <span>${email}</span>
-      <button class="btn btn-ghost" style="padding:8px 10px" type="button" onclick="removeEmail(${i})">Remover</button>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#00A89D;flex-shrink:0"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:13px;font-weight:500;color:#ffffff">${email}</span>
+      <button class="btn btn-ghost" style="padding:8px 10px;flex-shrink:0;color:#e05252" type="button" onclick="removeEmail(${i})">Remover</button>
     </div>
   `).join('');
 }
