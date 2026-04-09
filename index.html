@@ -620,22 +620,43 @@ function updateClock(){
 setInterval(updateClock,1000); updateClock();
 loadState(); renderAll();
 
-// ── Trigger: envio ao abrir app depois das 06:00 ──────────────────────────
+// ── Trigger: envio único diário via Firestore flag ───────────────────────
+// O flag lastAutoSend é guardado no Firestore para ser partilhado entre
+// todos os dispositivos — garante envio único mesmo com múltiplos telemóveis
 (function checkOnOpenTrigger() {
   const now = new Date();
-  const today = now.toDateString();
+  const todayKey = now.toISOString().split('T')[0]; // ex: "2026-04-09"
   const hour = now.getHours();
-  // App foi aberta depois das 06:00 e o relatório ainda não foi enviado hoje
-  if (hour >= 6 && state.lastAutoSend !== today) {
-    state.lastAutoSend = today;
-    saveState();
-    // Pequeno delay para garantir que Firebase carregou os registos
-    setTimeout(() => {
-      sendEmailJS(false).then(() => {
-        toast('📧 Relatório diário enviado automaticamente.');
-      });
-    }, 4000);
-  }
+  if (hour < 6) return; // antes das 06:00 não faz nada
+
+  // Aguarda Firebase estar disponível
+  setTimeout(async () => {
+    try {
+      // Verifica o flag no Firestore
+      const { getFirestore, doc, getDoc, setDoc } = await import(
+        "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js"
+      );
+      const { getApp } = await import(
+        "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js"
+      );
+      const db = getFirestore(getApp());
+      const flagRef = doc(db, 'configuracoes', 'emailFlag');
+      const flagSnap = await getDoc(flagRef);
+
+      const lastSent = flagSnap.exists() ? flagSnap.data().lastSentDate : null;
+
+      if (lastSent === todayKey) return; // já foi enviado hoje por outro dispositivo
+
+      // Marca como enviado ANTES de enviar (evita race condition)
+      await setDoc(flagRef, { lastSentDate: todayKey, sentAt: new Date().toISOString() });
+
+      // Envia o email
+      await sendEmailJS(false);
+      toast('📧 Relatório diário enviado automaticamente.');
+    } catch(e) {
+      console.error('Erro no trigger automático:', e);
+    }
+  }, 4500); // delay para Firebase carregar registos
 })();
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -657,13 +678,7 @@ function updateCountdown(){
   const s = String(Math.floor((diff%60000)/1000)).padStart(2,'0');
   $('countdownTimer').textContent = `${h}:${m}:${s}`;
   $('kpiNext').textContent = '06:00';
-  if(now.getHours()===6 && now.getMinutes()===0 && now.getSeconds()===0){
-    const today = now.toDateString();
-    if(state.lastAutoSend !== today){
-      state.lastAutoSend = today;
-      sendEmailJS(false);
-    }
-  }
+  // Envio às 06:00 gerido pelo trigger Firestore (checkOnOpenTrigger)
 }
 setInterval(updateCountdown,1000); updateCountdown();
 
