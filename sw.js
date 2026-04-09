@@ -1,4 +1,4 @@
-const CACHE_NAME = 'aliva-rm-monitor-v2';
+const CACHE_NAME = 'aliva-rm-monitor-v3';
 const APP_SHELL = [
   './index.html',
   './manifest.webmanifest',
